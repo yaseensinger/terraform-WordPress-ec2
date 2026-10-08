@@ -5,6 +5,8 @@ resource "aws_vpc" "wordpress_vpc" {
 
     }
     }
+
+  #public subnet 
 resource "aws_subnet" "wordpress_subnet" {
   vpc_id     = aws_vpc.wordpress_vpc.id
   cidr_block = var.vpc_cidr
