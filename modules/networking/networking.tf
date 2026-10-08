@@ -7,7 +7,7 @@ resource "aws_vpc" "wordpress_vpc" {
     }
 resource "aws_subnet" "wordpress_subnet" {
   vpc_id     = aws_vpc.wordpress_vpc.id
-  cidr_block = "10.0.1.0/24"
+  cidr_block = var.vpc_cidr
 
   tags = {
     Name = var.tag
@@ -27,7 +27,7 @@ resource "aws_route_table" "public_rout" {
 
 
   route {
-    cidr_block = "0.0.0.0/0"
+    cidr_block = var.subnet_cidr
     gateway_id = aws_internet_gateway.wordpress_gw.id
   }
 
