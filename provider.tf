@@ -7,9 +7,10 @@ terraform {
     }
   }
   backend "s3" {
-    bucket = "tf-test-state-430758392527-eu-west-1-an"
-    key = "terraform.state"
+    bucket = "terraform-wordpress-state-430758392522-eu-west-1"
+    key = "terraform.tfstate"
     region = "eu-west-1"
+    use_lockfile = true
   }
 }
 
