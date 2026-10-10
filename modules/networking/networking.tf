@@ -43,3 +43,18 @@ resource "aws_route_table_association" "wp_rout_table_association" {
       route_table_id = aws_route_table.public_rout.id
   
 }
+
+resource "aws_security_group" "ec2_sg" {
+  name = wordpress_vpc
+  description = "sg for ec2 to talk to internet"
+  vpc_id = wordpress_vpc.id  
+}
+
+resource "aws_vpc_security_group_ingress_rule" "example" {
+  security_group_id = aws_security_group.example.id
+
+  cidr_ipv4   = "0.0.0.0/0"
+  from_port   = 80
+  ip_protocol = "tcp"
+  to_port     = 80
+}
