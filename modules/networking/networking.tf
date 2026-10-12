@@ -9,7 +9,8 @@ resource "aws_vpc" "wordpress_vpc" {
   #public subnet 
 resource "aws_subnet" "wordpress_subnet" {
   vpc_id     = aws_vpc.wordpress_vpc.id
-  cidr_block = var.vpc_cidr
+  cidr_block = var.subnet_cidr
+  map_public_ip_on_launch = true
 
   tags = {
     Name = var.tag
@@ -29,7 +30,7 @@ resource "aws_route_table" "public_rout" {
 
 
   route {
-    cidr_block = var.subnet_cidr
+    cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.wordpress_gw.id
   }
 
@@ -49,6 +50,12 @@ resource "aws_security_group" "ec2_sg" {
   description = "sg for ec2 to internet"
   vpc_id = aws_vpc.wordpress_vpc.id
 }
+resource "aws_vpc_security_group_egress_rule" "ec2_outbound" {
+  security_group_id = aws_security_group.ec2_sg.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
 
 resource "aws_vpc_security_group_ingress_rule" "ec2_sg" {
   security_group_id = aws_security_group.ec2_sg.id
