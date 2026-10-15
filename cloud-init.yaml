@@ -1,4 +1,6 @@
 
+#cloud-config
+
 package_update: true
 package_upgrade: false
 
@@ -6,16 +8,16 @@ packages:
   - apache2
   - php
   - libapache2-mod-php
+  - php-cli
   - php-mysql
   - php-curl
   - php-gd
+  - php-intl
   - php-mbstring
   - php-xml
   - php-zip
   - mariadb-server
   - curl
-  - tar
-  - openssl
 
 write_files:
   - path: /usr/local/bin/setup-wordpress.sh
@@ -25,64 +27,68 @@ write_files:
       #!/bin/bash
       set -euo pipefail
 
-      # Start required services
-      systemctl enable --now mariadb
+      # Start Apache and MariaDB
       systemctl enable --now apache2
+      systemctl enable --now mariadb
 
-
+      # Generate separate database and admin passwords
       DB_NAME="wordpress"
       DB_USER="wpuser"
       DB_PASSWORD="$(openssl rand -hex 24)"
+      ADMIN_PASSWORD="$(openssl rand -hex 24)"
 
+      # Create the WordPress database and restricted user
       mariadb <<SQL
-      CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`;
-      CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost'
+      CREATE DATABASE wordpress;
+      CREATE USER 'wpuser'@'localhost'
         IDENTIFIED BY '${DB_PASSWORD}';
-      ALTER USER '${DB_USER}'@'localhost'
-        IDENTIFIED BY '${DB_PASSWORD}';
-      GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.*
-        TO '${DB_USER}'@'localhost';
+      GRANT ALL PRIVILEGES ON wordpress.*
+        TO 'wpuser'@'localhost';
       FLUSH PRIVILEGES;
       SQL
 
+      # Install WP-CLI
+      curl -fsSL \
+        https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar \
+        -o /usr/local/bin/wp
+      chmod 0755 /usr/local/bin/wp
 
-      cd /tmp
-      curl -fsSL https://wordpress.org/latest.tar.gz -o wordpress.tar.gz
-      tar -xzf wordpress.tar.gz
-
+      # Download WordPress
       mkdir -p /var/www/html
-      cp -a /tmp/wordpress/. /var/www/html/
+      chown www-data:www-data /var/www/html
 
+      runuser -u www-data -- wp core download \
+        --path=/var/www/html
 
-      cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php
+      # Configure WordPress to use MariaDB
+      runuser -u www-data -- wp config create \
+        --path=/var/www/html \
+        --dbname="$DB_NAME" \
+        --dbuser="$DB_USER" \
+        --dbpass="$DB_PASSWORD" \
+        --dbhost=localhost \
+        --dbprefix=wp_
 
-      sed -i \
-        -e "s/database_name_here/${DB_NAME}/" \
-        -e "s/username_here/${DB_USER}/" \
-        -e "s/password_here/${DB_PASSWORD}/" \
-        /var/www/html/wp-config.php
+      # Obtain the public IPv4 address using IMDSv2
+      TOKEN="$(curl -fsS -X PUT \
+        -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600' \
+        http://169.254.169.254/latest/api/token)"
+      PUBLIC_IP="$(curl -fsS \
+        -H "X-aws-ec2-metadata-token: $TOKEN" \
+        http://169.254.169.254/latest/meta-data/public-ipv4)"
+      SITE_URL="http://${PUBLIC_IP}"
 
+      # Complete the WordPress installation
+      runuser -u www-data -- wp core install \
+        --path=/var/www/html \
+        --url="$SITE_URL" \
+        --title="My WordPress Website" \
+        --admin_user="siteadmin" \
+        --admin_password="$ADMIN_PASSWORD" \
+        --admin_email="admin@example.com" \
+        --skip-email
 
-      SALTS="$(curl -fsSL https://api.wordpress.org/secret-key/1.1/salt/)"
-      if [ -n "$SALTS" ]; then
-        python3 - "$SALTS" <<'PY'
-      import sys
-      from pathlib import Path
-
-      path = Path("/var/www/html/wp-config.php")
-      config = path.read_text()
-      salts = sys.argv[1].strip()
-
-      start = config.find("define( 'AUTH_KEY'")
-      end_marker = "define( 'NONCE_SALT'"
-      end = config.find(end_marker, start)
-
-      if start != -1 and end != -1:
-          config = config[:start] + salts + "\n" + config[end + len(end_marker):]
-          path.write_text(config)
-      PY
-      fi
-
+      # Enable Apache URL rewriting
       a2enmod rewrite
 
       cat > /etc/apache2/sites-available/wordpress.conf <<'APACHE'
@@ -99,15 +105,25 @@ write_files:
       a2ensite wordpress.conf
       a2dissite 000-default.conf
 
+      # Protect the WordPress configuration
       chown -R www-data:www-data /var/www/html
       chown root:www-data /var/www/html/wp-config.php
       chmod 640 /var/www/html/wp-config.php
 
+      # Save generated credentials for the administrator
+      umask 077
+      {
+        printf 'Database name: %s\n' "$DB_NAME"
+        printf 'Database user: %s\n' "$DB_USER"
+        printf 'Database password: %s\n' "$DB_PASSWORD"
+        printf 'WordPress admin user: siteadmin\n'
+        printf 'WordPress admin password: %s\n' "$ADMIN_PASSWORD"
+        printf 'WordPress URL: %s\n' "$SITE_URL"
+      } > /root/wordpress-credentials.txt
+
+      # Validate and restart Apache
       apache2ctl configtest
       systemctl restart apache2
-
-      install -o root -g root -m 600 /dev/null /root/wordpress-db-password.txt
-      printf '%s\n' "$DB_PASSWORD" > /root/wordpress-db-password.txt
 
 runcmd:
   - [bash, /usr/local/bin/setup-wordpress.sh]
