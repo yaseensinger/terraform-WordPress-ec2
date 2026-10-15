@@ -9,7 +9,7 @@ In this repo I used Terraform to provision the infrastructure for a WordPress we
 - User-data script to install Apache
 - S3 backend for remote Terraform state
 
-### hat I Learned
+### What I Learned
 -How to use Terraform to provision AWS resources.
 - How VPCs, subnets, route tables and Internet Gateways work together.
 - How security group inbound and outbound rules affect connectivity.

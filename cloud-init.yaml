@@ -1,0 +1,113 @@
+
+package_update: true
+package_upgrade: false
+
+packages:
+  - apache2
+  - php
+  - libapache2-mod-php
+  - php-mysql
+  - php-curl
+  - php-gd
+  - php-mbstring
+  - php-xml
+  - php-zip
+  - mariadb-server
+  - curl
+  - tar
+  - openssl
+
+write_files:
+  - path: /usr/local/bin/setup-wordpress.sh
+    owner: root:root
+    permissions: '0750'
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      # Start required services
+      systemctl enable --now mariadb
+      systemctl enable --now apache2
+
+
+      DB_NAME="wordpress"
+      DB_USER="wpuser"
+      DB_PASSWORD="$(openssl rand -hex 24)"
+
+      mariadb <<SQL
+      CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`;
+      CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost'
+        IDENTIFIED BY '${DB_PASSWORD}';
+      ALTER USER '${DB_USER}'@'localhost'
+        IDENTIFIED BY '${DB_PASSWORD}';
+      GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.*
+        TO '${DB_USER}'@'localhost';
+      FLUSH PRIVILEGES;
+      SQL
+
+
+      cd /tmp
+      curl -fsSL https://wordpress.org/latest.tar.gz -o wordpress.tar.gz
+      tar -xzf wordpress.tar.gz
+
+      mkdir -p /var/www/html
+      cp -a /tmp/wordpress/. /var/www/html/
+
+
+      cp /var/www/html/wp-config-sample.php /var/www/html/wp-config.php
+
+      sed -i \
+        -e "s/database_name_here/${DB_NAME}/" \
+        -e "s/username_here/${DB_USER}/" \
+        -e "s/password_here/${DB_PASSWORD}/" \
+        /var/www/html/wp-config.php
+
+
+      SALTS="$(curl -fsSL https://api.wordpress.org/secret-key/1.1/salt/)"
+      if [ -n "$SALTS" ]; then
+        python3 - "$SALTS" <<'PY'
+      import sys
+      from pathlib import Path
+
+      path = Path("/var/www/html/wp-config.php")
+      config = path.read_text()
+      salts = sys.argv[1].strip()
+
+      start = config.find("define( 'AUTH_KEY'")
+      end_marker = "define( 'NONCE_SALT'"
+      end = config.find(end_marker, start)
+
+      if start != -1 and end != -1:
+          config = config[:start] + salts + "\n" + config[end + len(end_marker):]
+          path.write_text(config)
+      PY
+      fi
+
+      a2enmod rewrite
+
+      cat > /etc/apache2/sites-available/wordpress.conf <<'APACHE'
+      <VirtualHost *:80>
+          DocumentRoot /var/www/html
+
+          <Directory /var/www/html>
+              AllowOverride All
+              Require all granted
+          </Directory>
+      </VirtualHost>
+      APACHE
+
+      a2ensite wordpress.conf
+      a2dissite 000-default.conf
+
+      chown -R www-data:www-data /var/www/html
+      chown root:www-data /var/www/html/wp-config.php
+      chmod 640 /var/www/html/wp-config.php
+
+      apache2ctl configtest
+      systemctl restart apache2
+
+      install -o root -g root -m 600 /dev/null /root/wordpress-db-password.txt
+      printf '%s\n' "$DB_PASSWORD" > /root/wordpress-db-password.txt
+
+runcmd:
+  - [bash, /usr/local/bin/setup-wordpress.sh]
